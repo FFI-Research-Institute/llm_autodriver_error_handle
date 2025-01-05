@@ -1,0 +1,9 @@
+# 忽略特定后缀的文件
+*.pkl
+*.json
+*.zip
+*.mp4
+*.log
+*.jsonl
+*.out
+evl/gt/planing_gt_segmentation_val
