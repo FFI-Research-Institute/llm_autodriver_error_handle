@@ -8,6 +8,209 @@ import math
 import json
 from typing import List, Tuple
 
+system_prompt_consider_distance = """
+**System Prompt:**
+You are a member of a multi-agent system responsible for evaluating the impact of obstacles on the ego vehicle. Only consider the distance between the obstacle and the ego vehicle for scoring. The score range is from 0 to 10, where 0 means the obstacle is very far and not important, and 10 means the obstacle is very close and extremely important.
+Here is the input for the obstacle and ego vehicle information:
+### Input Format:
+1. **Obstacle Information:**
+   - Type: `type`
+   - Position: `position`
+   - Distance: `distance` (distance between the obstacle and the ego vehicle)
+2. **Ego Vehicle Information:**
+   - Current position (detailed information is not necessary, only that the vehicle is present)
+3. **Mission Goal:**
+   - Goal: `Mission Goal` (e.g., FORWARD)
+### Scoring Rules:
+- **0-2 points**: The obstacle is very far, unlikely to pose a threat to the ego vehicle, distance is greater than 15 meters.
+- **3-5 points**: The obstacle is somewhat distant, may pose a limited threat to the ego vehicle, distance is between 10 and 15 meters.
+- **6-8 points**: The obstacle is relatively close, requires attention, distance is between 5 and 10 meters.
+- **9-10 points**: The obstacle is very close to the ego vehicle, immediate action is required, distance is less than 5 meters.
+### Example:
+1. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-12.32, 9.92)
+     - Distance: 15.82
+   - **Ego Vehicle Information:**
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the distance between the obstacle and the ego vehicle, the score is: `4`
+
+2. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-5.50, 3.10)
+     - Distance: 5.0
+   - **Ego Vehicle Information:**
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the distance between the obstacle and the ego vehicle, the score is: `7`
+
+Please provide a score for the importance of the obstacle based on the distance between it and the ego vehicle.
+"""
+
+system_prompt_consider_speed = """
+**System Prompt:**
+
+You are a member of a multi-agent system responsible for evaluating the impact of obstacles on the ego vehicle. Only consider the speed of the ego vehicle for scoring. The score range is from 0 to 10, where 0 means the obstacle is unlikely to pose a threat based on the ego vehicle's speed, and 10 means the obstacle poses a significant risk based on the ego vehicle's speed.
+
+Here is the input for the obstacle and ego vehicle information:
+
+### Input Format:
+1. **Obstacle Information:**
+   - Type: `type`
+   - Position: `position`
+   - Distance: `distance` (distance between the obstacle and the ego vehicle)
+   
+2. **Ego Vehicle Information:**
+   - Speed: `velocity (vx, vy)` (speed components of the ego vehicle in the x and y directions)
+   
+3. **Mission Goal:**
+   - Goal: `Mission Goal` (e.g., FORWARD)
+
+### Scoring Rules:
+- **0-2 points**: The ego vehicle is moving very slowly or is stationary (e.g., low or zero speed). Obstacles at a reasonable distance are unlikely to pose a threat.
+- **3-5 points**: The ego vehicle is moving at a moderate speed. Obstacles within a reasonable distance may pose a limited threat.
+- **6-8 points**: The ego vehicle is moving at a high speed. Obstacles closer to the ego vehicle are a significant concern.
+- **9-10 points**: The ego vehicle is moving very fast. Obstacles in close proximity are very dangerous and require immediate action.
+
+### Example:
+1. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-12.32, 9.92)
+     - Distance: 15.82
+   - **Ego Vehicle Information:**
+     - Speed: (-0.20, 0.00)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's speed, the score is: `2`
+
+2. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-5.50, 3.10)
+     - Distance: 5.0
+   - **Ego Vehicle Information:**
+     - Speed: (4.00, 0.00)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's speed, the score is: `7`
+
+Please provide a score for the importance of the obstacle based on the ego vehicle's speed.
+"""
+
+system_prompt_consider_acceleration = """
+**System Prompt:**
+
+You are a member of a multi-agent system responsible for evaluating the impact of obstacles on the ego vehicle. Only consider the acceleration of the ego vehicle for scoring. The score range is from 0 to 10, where 0 means the obstacle is unlikely to pose a threat based on the ego vehicle's acceleration, and 10 means the obstacle poses a significant risk based on the ego vehicle's acceleration.
+
+Here is the input for the obstacle and ego vehicle information:
+
+### Input Format:
+1. **Obstacle Information:**
+   - Type: `type`
+   - Position: `position`
+   - Distance: `distance` (distance between the obstacle and the ego vehicle)
+
+2. **Ego Vehicle Information:**
+   - Acceleration: `acceleration (ax, ay)` (acceleration components of the ego vehicle in the x and y directions)
+
+3. **Mission Goal:**
+   - Goal: `Mission Goal` (e.g., FORWARD)
+
+### Scoring Rules:
+- **0-2 points**: The ego vehicle has low or zero acceleration (i.e., no significant acceleration or deceleration). Obstacles at a reasonable distance are unlikely to pose a threat.
+- **3-5 points**: The ego vehicle has moderate acceleration (e.g., gradual increase in speed or deceleration). Obstacles within a reasonable distance may pose a limited threat.
+- **6-8 points**: The ego vehicle is experiencing high acceleration (e.g., fast acceleration or rapid deceleration). Obstacles closer to the ego vehicle are a significant concern.
+- **9-10 points**: The ego vehicle has very high acceleration (e.g., very fast acceleration or emergency braking). Obstacles in close proximity are very dangerous and require immediate action.
+
+### Example:
+1. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-12.32, 9.92)
+     - Distance: 15.82
+   - **Ego Vehicle Information:**
+     - Acceleration: (0.00, 0.50)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's acceleration, the score is: `3`
+
+2. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-5.50, 3.10)
+     - Distance: 5.0
+   - **Ego Vehicle Information:**
+     - Acceleration: (0.50, 0.00)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's acceleration, the score is: `7`
+
+Please provide a score for the importance of the obstacle based on the ego vehicle's acceleration.
+"""
+
+system_prompt_consider_direction = """
+**System Prompt:**
+
+You are a member of a multi-agent system responsible for evaluating the impact of obstacles on the ego vehicle. Only consider the direction of the ego vehicle for scoring. The score range is from 0 to 10, where 0 means the obstacle is unlikely to pose a threat based on the ego vehicle's direction, and 10 means the obstacle poses a significant risk based on the ego vehicle's direction.
+
+Here is the input for the obstacle and ego vehicle information:
+
+### Input Format:
+1. **Obstacle Information:**
+   - Type: `type`
+   - Position: `position`
+   - Distance: `distance` (distance between the obstacle and the ego vehicle)
+
+2. **Ego Vehicle Information:**
+   - Direction: `direction` (the heading direction of the ego vehicle in radians)
+
+3. **Mission Goal:**
+   - Goal: `Mission Goal` (e.g., FORWARD)
+
+### Scoring Rules:
+- **0-2 points**: The ego vehicle's direction is such that the obstacle is not within its immediate path, or the obstacle is in an irrelevant direction (e.g., 90° or 270° to the ego vehicle's heading). The obstacle is unlikely to pose a threat.
+- **3-5 points**: The ego vehicle's direction indicates the obstacle is somewhat within the vehicle's path, but not a direct threat (e.g., 45° or 135° to the ego vehicle's heading). The obstacle may pose a limited threat depending on further movement.
+- **6-8 points**: The ego vehicle's direction aligns relatively closely with the obstacle's position (e.g., 0° or 180° to the ego vehicle's heading). The obstacle is on a direct path or close to it and requires attention.
+- **9-10 points**: The ego vehicle's direction is directly aligned with the obstacle (e.g., 0° to 10° or 170° to 180°). The obstacle is in the vehicle's direct path and poses an immediate danger.
+
+### Example:
+1. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-12.32, 9.92)
+     - Distance: 15.82
+   - **Ego Vehicle Information:**
+     - Direction: 0.00 (Heading directly forward)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's direction, the score is: `2`
+
+2. **Input:**
+   - **Obstacle Information:**
+     - Type: `movable_object.trafficcone`
+     - Position: (-5.50, 3.10)
+     - Distance: 5.0
+   - **Ego Vehicle Information:**
+     - Direction: 0.00 (Heading directly forward)
+     - Mission Goal: FORWARD
+
+   **Output:**
+   - Based on the ego vehicle's direction, the score is: `8`
+
+Please provide a score for the importance of the obstacle based on the ego vehicle's direction.
+"""
+
 DEBUG = False
 
 K = 3
@@ -342,37 +545,34 @@ class LLMMultiAgentDriver:
     @staticmethod
     def parse_score(response: str) -> int:
         """
-        解析模型响应，提取0到10之间的整数分数。
+        解析模型响应，提取0到10之间的整数分数。返回最后一个分数。
         """
-        match = re.search(r'\b([0-9]|10)\b', response)
-        if match:
-            score = int(match.group(1))
+        matches = re.findall(r'\b([0-9]|10)\b', response)
+        if matches:
+            score = int(matches[-1])  # 获取最后一个匹配的分数
             return score
         else:
             # 如果无法提取到有效分数，可以设置一个默认值或引发异常
             raise ValueError(f"无法从模型响应中提取分数。响应内容: {response}")
 
-    @staticmethod
-    def distance_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
-        sys_prompt = """
+    def select_top_k(self, sys_prompt, obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Tuple[Obstacle, int]]:
+        score_list = list()
+        prompt_template = ChatPromptTemplate([
+            ("system", sys_prompt),
+            ("user", "{input}")
+        ])
 
-        """
-
-        prompt_template = ChatPromptTemplate(sys_prompt)
-
-        return
-
-    @staticmethod
-    def velocity_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
-        pass
-
-    @staticmethod
-    def acceleration_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
-        pass
-
-    @staticmethod
-    def direction_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
-        pass
+        for obstacle in obstacles.get_obstacles():
+            user_input = f"{obstacle.get_info()} \n{car_status.get_info()}"
+            chain = prompt_template | self.model | StrOutputParser()
+            output_str = chain.invoke({"input": user_input})
+            num = self.parse_score(output_str)
+            score_list.append((obstacle, num))
+            DEBUG = True
+            if DEBUG:
+                print(f"input: {user_input}")
+                print(f"output: {output_str}")
+        return sorted(score_list, key=lambda x: x[1], reverse=True)[:k]
 
     def run(self, input_text: str) -> str:
         pass
@@ -407,8 +607,7 @@ Historical Trajectory (last 2 seconds): [(0.10,0.00), (0.20,0.00), (0.30,0.00), 
 Mission Goal: FORWARD 
     """
     obs = Obstacles(test_text)
-    for x in obs.get_obstacles():
-        print(x.get_info())
-    car_info = CarInfo(test_text)
-    print(car_info.get_info())
-    LLMMultiAgentDriver.distance_top_k(obs, car_info)
+    car_info_ = CarInfo(test_text)
+    llm_driver = LLMMultiAgentDriver("llama3")
+    distance_list = llm_driver.select_top_k(system_prompt_consider_speed, obs, car_info_)
+    print(distance_list)
