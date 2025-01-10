@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="ChatGPT_AUTO_CodeReview" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="llm_autodriver_error_handle" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="ChatGPT_AUTO_CodeReview" project-jdk-type="Python SDK" />
 </project>

@@ -102,6 +102,36 @@ class CarInfo:
         }
         return json.dumps(data, indent=4, ensure_ascii=False)
 
+    def get_info(self) -> str:
+        output_lines = []
+        output_lines.append("Ego-States:")
+        output_lines.append(f"  Velocity (vx, vy): ({self.velocity[0]:.2f}, {self.velocity[1]:.2f})")
+        output_lines.append(f"  Heading Angular Velocity (v_yaw): {self.angular_velocity:.2f}")
+        output_lines.append(f"  Acceleration (ax, ay): ({self.acceleration[0]:.2f}, {self.acceleration[1]:.2f})")
+        output_lines.append(f"  Can Bus (vx, vy): ({self.can_bus[0]:.2f}, {self.can_bus[1]:.2f})")
+        output_lines.append(f"  Heading Speed: {self.heading_speed:.2f}")
+        output_lines.append(f"  Steering: {self.steering:.2f}")
+
+        output_lines.append("\nHistorical Trajectory (last 2 seconds):")
+        if self.history_trajectory:
+            for idx, (x, y) in enumerate(self.history_trajectory, start=1):
+                output_lines.append(f"  {idx}. (x: {x:.2f}, y: {y:.2f})")
+        else:
+            output_lines.append("  No historical trajectory data available.")
+
+        output_lines.append(f"\nMission Goal: {self.mission_goal}")
+
+        # 将所有行组合成一个单一的字符串
+        output_str = "\n".join(output_lines)
+
+        # 打印到控制台
+        if DEBUG:
+            print(output_str)
+
+        # 返回打印的字符串
+        return output_str
+
+
     # def __repr__(self):
     #     return self.to_json()
 
@@ -211,13 +241,40 @@ class Obstacle:
             print(f"行驶方向: {angle_deg} 度")
         return angle_deg
 
-    def print_info(self):
-        print(f"type: {self.type}\n position: {self.position}\n "
-              f"trajectory: {self.trajectory}\n "
-              f"velocity: {self.velocity()}\n "
-              f"acceleration: {self.acceleration()}\n "
-              f"direction: {self.direction()}\n "
-              f"distance: {self.distance_to_hero()}\n")
+    def get_info(self):
+        # 格式化位置
+        position_formatted = f"({self.position[0]:.2f}, {self.position[1]:.2f})"
+
+        # 格式化轨迹
+        trajectory_formatted = "[" + ", ".join(f"({x:.2f}, {y:.2f})" for x, y in self.trajectory) + "]"
+
+        # 格式化速度
+        velocity_x, velocity_y = self.velocity()
+        velocity_formatted = f"({velocity_x:.2f}, {velocity_y:.2f})"
+
+        # 格式化加速度
+        acceleration_x, acceleration_y = self.acceleration()
+        acceleration_formatted = f"({acceleration_x:.2f}, {acceleration_y:.2f})"
+
+        # 格式化方向
+        direction_formatted = f"{self.direction():.2f}"
+
+        # 格式化距离
+        distance_formatted = f"{self.distance_to_hero():.2f}"
+
+        # 打印信息
+        info_str = (
+            f"type: {self.type}\n"
+            f"position: {position_formatted}\n"
+            f"trajectory: {trajectory_formatted}\n"
+            f"velocity: {velocity_formatted}\n"
+            f"acceleration: {acceleration_formatted}\n"
+            f"direction: {direction_formatted}\n"
+            f"distance: {distance_formatted}\n"
+        )
+        if DEBUG:
+            print(info_str)
+        return info_str
 
 
 class Obstacles:
@@ -283,24 +340,38 @@ class LLMMultiAgentDriver:
         self.model = OllamaLLM(model=llm_name, temperature=temperature, num_ctx=8000, timeout=100, num_predict=8192)
 
     @staticmethod
-    def distance_top_k(obstacles: List[Obstacle], car_status: CarInfo, k: int = K) -> str:
-        sys_prompt = """
-        
+    def parse_score(response: str) -> int:
         """
+        解析模型响应，提取0到10之间的整数分数。
+        """
+        match = re.search(r'\b([0-9]|10)\b', response)
+        if match:
+            score = int(match.group(1))
+            return score
+        else:
+            # 如果无法提取到有效分数，可以设置一个默认值或引发异常
+            raise ValueError(f"无法从模型响应中提取分数。响应内容: {response}")
+
+    @staticmethod
+    def distance_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
+        sys_prompt = """
+
+        """
+
         prompt_template = ChatPromptTemplate(sys_prompt)
 
         return
 
     @staticmethod
-    def velocity_top_k(obstacles: List[Obstacle], car_status: CarInfo, k: int = K) -> str:
+    def velocity_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
         pass
 
     @staticmethod
-    def acceleration_top_k(obstacles: List[Obstacle], car_status: CarInfo, k: int = K) -> str:
+    def acceleration_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
         pass
 
     @staticmethod
-    def direction_top_k(obstacles: List[Obstacle], car_status: CarInfo, k: int = K) -> str:
+    def direction_top_k(obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Obstacle]:
         pass
 
     def run(self, input_text: str) -> str:
@@ -336,5 +407,8 @@ Historical Trajectory (last 2 seconds): [(0.10,0.00), (0.20,0.00), (0.30,0.00), 
 Mission Goal: FORWARD 
     """
     obs = Obstacles(test_text)
+    for x in obs.get_obstacles():
+        print(x.get_info())
     car_info = CarInfo(test_text)
-    LLMMultiAgentDriver.distance_top_k(obs.get_obstacles(), car_info)
+    print(car_info.get_info())
+    LLMMultiAgentDriver.distance_top_k(obs, car_info)
