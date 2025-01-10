@@ -1,12 +1,159 @@
+import argparse
+from tqdm import tqdm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
+from typing import List, Tuple
+from util import load_pkl_file, save_to_pkl
+import numpy as np
 import re
 import sys
 import ast
 import math
 import json
-from typing import List, Tuple
+
+example_input = """
+input: 
+From Distance:
+Score: 8
+type: vehicle.car
+position: (0.50, 9.57)
+trajectory: [(0.51, 9.57), (0.51, 9.57), (0.51, 9.57), (0.51, 9.57), (0.52, 9.59), (0.52, 9.56)]
+velocity: (0.00, -0.00)
+acceleration: (0.00, -0.01)
+direction: 315.00
+distance: 9.58
+
+Score: 7
+type: movable_object.trafficcone
+position: (5.25, 0.04)
+trajectory: [(5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.01)]
+velocity: (0.00, -0.01)
+acceleration: (0.00, -0.01)
+direction: 270.00
+distance: 5.25
+
+Score: 7
+type: vehicle.truck
+position: (3.59, 7.69)
+trajectory: [(3.59, 7.71), (3.59, 7.72), (3.59, 7.74), (3.59, 7.75), (3.59, 7.77), (3.59, 7.79)]
+velocity: (0.00, 0.02)
+acceleration: (0.00, 0.00)
+direction: 90.00
+distance: 8.49
+
+From Acceleration:
+Score: 10
+type: vehicle.car
+position: (1.08, 15.43)
+trajectory: [(1.12, 15.43), (1.12, 15.43), (1.12, 15.43), (1.08, 15.59), (1.12, 16.25), (1.16, 16.90)]
+velocity: (0.01, 0.29)
+acceleration: (0.01, 0.16)
+direction: 88.44
+distance: 15.47
+
+Score: 1
+type: movable_object.trafficcone
+position: (5.25, 0.04)
+trajectory: [(5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.04), (5.25, 0.01)]
+velocity: (0.00, -0.01)
+acceleration: (0.00, -0.01)
+direction: 270.00
+distance: 5.25
+
+Score: 1
+type: movable_object.trafficcone
+position: (-13.47, 5.44)
+trajectory: [(-13.47, 5.47), (-13.47, 5.47), (-13.47, 5.47), (-13.47, 5.47), (-13.47, 5.47), (-13.47, 5.40)]
+velocity: (0.00, -0.01)
+acceleration: (0.00, -0.02)
+direction: 270.00
+distance: 14.53
+
+From Speed:
+Score: 2
+type: movable_object.trafficcone
+position: (5.47, 3.14)
+trajectory: [(5.46, 3.15), (5.46, 3.16), (5.46, 3.16), (5.45, 3.17), (5.45, 3.18), (5.46, 3.14)]
+velocity: (0.00, -0.00)
+acceleration: (0.00, -0.01)
+direction: 270.00
+distance: 6.31
+
+Score: 2
+type: movable_object.trafficcone
+position: (-12.32, 9.92)
+trajectory: [(-12.32, 9.92), (-12.32, 9.92), (-12.32, 9.92), (-12.32, 9.92), (-12.32, 9.92), (-12.32, 9.92)]
+velocity: (0.00, 0.00)
+acceleration: (0.00, 0.00)
+direction: 0.00
+distance: 15.82
+
+Score: 1
+type: movable_object.trafficcone
+position: (-9.13, 19.80)
+trajectory: [(-9.13, 19.81), (-9.13, 19.81), (-9.13, 19.81), (-9.13, 19.79), (-9.12, 19.78), (-9.12, 19.76)]
+velocity: (0.00, -0.01)
+acceleration: (0.00, -0.00)
+direction: 281.31
+distance: 21.80
+
+From Direction:
+Score: 4
+type: movable_object.trafficcone
+position: (-9.13, 19.80)
+trajectory: [(-9.13, 19.81), (-9.13, 19.81), (-9.13, 19.81), (-9.13, 19.79), (-9.12, 19.78), (-9.12, 19.76)]
+velocity: (0.00, -0.01)
+acceleration: (0.00, -0.00)
+direction: 281.31
+distance: 21.80
+
+Score: 4
+type: movable_object.trafficcone
+position: (-9.70, 10.84)
+trajectory: [(-9.70, 10.84), (-9.70, 10.84), (-9.70, 10.84), (-9.70, 10.84), (-9.70, 10.82), (-9.71, 10.79)]
+velocity: (-0.00, -0.01)
+acceleration: (-0.00, -0.01)
+direction: 258.69
+distance: 14.55
+
+Score: 4
+type: vehicle.car
+position: (1.08, 15.43)
+trajectory: [(1.12, 15.43), (1.12, 15.43), (1.12, 15.43), (1.08, 15.59), (1.12, 16.25), (1.16, 16.90)]
+velocity: (0.01, 0.29)
+acceleration: (0.01, 0.16)
+direction: 88.44
+distance: 15.47
+
+
+Ego-States:
+  Velocity (vx, vy): (-0.00, 0.00)
+  Heading Angular Velocity (v_yaw): -0.00
+  Acceleration (ax, ay): (0.00, 0.00)
+  Can Bus (vx, vy): (-0.03, 0.06)
+  Heading Speed: 0.00
+  Steering: -0.28
+
+Historical Trajectory (last 2 seconds):
+  1. (x: 0.00, y: 0.00)
+  2. (x: 0.00, y: 0.00)
+  3. (x: 0.00, y: 0.00)
+  4. (x: 0.00, y: 0.00)
+
+Mission Goal: FORWARD
+"""
+
+example_output = """
+output:
+Thoughts:
+ - Notable Objects from Perception: None
+   Potential Effects from Prediction: None
+Meta Action: STOP
+Trajectory:
+[(-0.00,-0.00), (0.00,-0.00), (0.00,0.00), (0.00,0.00), (0.00,-0.00), (0.00,0.00)]
+<\example>
+"""
 
 system_prompt_consider_distance = """
 **System Prompt:**
@@ -211,6 +358,72 @@ Here is the input for the obstacle and ego vehicle information:
 Please provide a score for the importance of the obstacle based on the ego vehicle's direction.
 """
 
+system_prompt_final_decision = """
+**Autonomous Driving Trajectory Planner**
+
+**Role**: You are the brain of an autonomous vehicle. Plan a safe and physically feasible 3-second driving trajectory, avoiding critical obstacles, ensuring smoothness, and considering the vehicle's dynamic constraints. **The coordinate changes between waypoints must be smooth and must not exhibit sudden, physically unrealistic changes**. The output format must be strictly fixed as: `[(x1, y1), (x2, y2), (x3, y3), (x4, y4), (x5, y5), (x6, y6)]`.
+
+### **Context:**
+- **Coordinate System**: The X-axis is perpendicular, and the Y-axis is parallel to the direction you're facing. You are at point (0, 0).
+- **Objective**: Generate a smooth and physically valid 3-second route using 6 waypoints (one every 0.5 seconds), ensuring no collisions and avoiding any sudden, physically unrealistic changes in coordinates.
+
+### **Inputs:**
+
+1. **Obstacle Information:**
+   - **Obstacle Selection Criteria**: Select and evaluate the most important obstacles based on the following four perspectives:
+     - **From Distance**: The top 3 obstacles based on proximity to the ego vehicle.
+     - **From Velocity**: The top 3 obstacles based on relative speed with respect to the ego vehicle.
+     - **From Direction**: The top 3 obstacles based on their relative direction (heading) to the ego vehicle's heading.
+     - **From Acceleration**: The top 3 obstacles based on their acceleration/deceleration relative to the ego vehicle.
+
+   Each obstacle is described by:
+   - **Type**: `str`
+   - **Position**: `(x, y)`
+   - **Trajectory**: A list of predicted positions over time.
+   - **Velocity**: `(vx, vy)` — The velocity components of the obstacle.
+   - **Acceleration**: `(ax, ay)` — The acceleration components of the obstacle.
+   - **Direction**: The heading of the obstacle (in degrees).
+   - **Distance**: The distance between the obstacle and the ego vehicle.
+
+2. **Ego Vehicle State:**
+   - **Velocity**: `(vx, vy)` — The velocity components of the ego vehicle.
+   - **Heading Angular Velocity**: `v_yaw` — The rate of change of the vehicle's heading.
+   - **Acceleration**: `(ax, ay)` — The acceleration components of the ego vehicle.
+   - **CAN Bus**: `(vx, vy)` — The vehicle's speed components from the CAN bus.
+   - **Heading Speed**: The speed of the vehicle's heading (angular speed).
+   - **Steering**: The steering angle of the vehicle.
+   - **Physical Constraints**: Consider the vehicle's maximum acceleration, turning radius, and other physical limitations to ensure the generated trajectory is smooth and feasible.
+
+3. **Mission Goal:**
+   - **Goal**: The target location or direction for the vehicle over the next 3 seconds (e.g., **FORWARD**).
+
+### **Task:**
+- **Thought Process**:
+  - **Notable Obstacles**: Identify the most critical obstacles based on the four perspectives (distance, velocity, direction, and acceleration).
+  - **Potential Effects**: Evaluate how these obstacles might impact the ego vehicle's trajectory, considering their speed, direction, and future predicted positions.
+
+- **Action Plan**: 
+  - Adjust speed, steering, or trajectory to avoid collisions. Ensure that all actions are within the dynamic limits of the ego vehicle (e.g., maximum acceleration, steering angle).
+  - Smoothly transition between waypoints to avoid sudden speed or direction changes that could destabilize the vehicle. **Ensure that the coordinate changes between waypoints are physically realistic and avoid any sudden, unrealistic jumps.**
+
+- **Trajectory Planning**: 
+  - Generate a safe, feasible, and smooth 3-second trajectory that avoids all obstacles and respects the physical constraints of the ego vehicle. The trajectory should consist of **6 waypoints** (one every 0.5 seconds), with each point being a calculated safe position. **The coordinate changes between waypoints must be continuous and physically plausible, without any sudden, unrealistic jumps or sharp changes**.
+
+### **Output**:
+
+- **Thoughts**:
+  - **Notable Obstacles**: Describe the most critical obstacles selected based on the four criteria and their relative risk to the ego vehicle.
+  - **Potential Effects**: Analyze how the selected obstacles might influence trajectory planning, considering their distance, speed, direction, and acceleration.
+
+- **Meta Action**:
+  - Provide the actions you would take to ensure the ego vehicle remains safe, such as adjusting speed, steering, or initiating evasive maneuvers. Ensure these actions are physically feasible and the trajectory remains smooth.
+
+- **Trajectory (MOST IMPORTANT)**: 
+  - A list of 6 waypoints in the fixed format: **`[(x1, y1), (x2, y2), (x3, y3), (x4, y4), (x5, y5), (x6, y6)]`**. Ensure the path is smooth, collision-free, and within the vehicle's physical constraints. **The changes in coordinates between waypoints must adhere to physical laws, avoiding any sudden, unrealistic jumps or abrupt shifts.**
+
+<example>
+""" + example_input + example_output
+
 DEBUG = False
 
 K = 3
@@ -334,7 +547,6 @@ class CarInfo:
         # 返回打印的字符串
         return output_str
 
-
     # def __repr__(self):
     #     return self.to_json()
 
@@ -351,6 +563,9 @@ class Obstacle:
         self.trajectory = trajectory  # list of (x, y)
         self.type = obstacle_type
         self.position = position
+
+    def __eq__(self, other):
+        return self.type == other.type and self.position == other.position
 
     def distance_to_hero(self) -> float:
         """
@@ -371,7 +586,8 @@ class Obstacle:
         :return: 速度向量 (vx, vy)。
         """
         if len(self.trajectory) < 2:
-            print("轨迹数据不足，无法计算速度。返回 (0.0, 0.0)")
+            if DEBUG:
+                print("轨迹数据不足，无法计算速度。返回 (0.0, 0.0)")
             return (0.0, 0.0)
 
         total_vx = 0.0
@@ -397,7 +613,8 @@ class Obstacle:
         :return: 加速度向量 (ax, ay)。
         """
         if len(self.trajectory) < 3:
-            print("轨迹数据不足，无法计算加速度。返回 (0.0, 0.0)")
+            if DEBUG:
+                print("轨迹数据不足，无法计算加速度。返回 (0.0, 0.0)")
             return (0.0, 0.0)
 
         # 首先计算每一秒的速度向量
@@ -434,7 +651,8 @@ class Obstacle:
         """
         vx, vy = self.velocity()
         if vx == 0 and vy == 0:
-            print("速度为零，方向不可定义。返回 0.0 度")
+            if DEBUG:
+                print("速度为零，方向不可定义。返回 0.0 度")
             return 0.0
         angle_rad = math.atan2(vy, vx)
         angle_deg = math.degrees(angle_rad)
@@ -540,7 +758,11 @@ class Obstacles:
 
 class LLMMultiAgentDriver:
     def __init__(self, llm_name: str, temperature: float = 0.0):
-        self.model = OllamaLLM(model=llm_name, temperature=temperature, num_ctx=8000, timeout=100, num_predict=8192)
+        self.model = OllamaLLM(model=llm_name,
+                               temperature=temperature,
+                               num_ctx=4096,
+                               timeout=100,
+                               num_predict=4096)
 
     @staticmethod
     def parse_score(response: str) -> int:
@@ -548,14 +770,58 @@ class LLMMultiAgentDriver:
         解析模型响应，提取0到10之间的整数分数。返回最后一个分数。
         """
         matches = re.findall(r'\b([0-9]|10)\b', response)
+
         if matches:
             score = int(matches[-1])  # 获取最后一个匹配的分数
             return score
         else:
             # 如果无法提取到有效分数，可以设置一个默认值或引发异常
-            raise ValueError(f"无法从模型响应中提取分数。响应内容: {response}")
+            print(f"无法从模型响应中提取分数。响应内容: {response}")
+            return 0
 
-    def select_top_k(self, sys_prompt, obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[Tuple[Obstacle, int]]:
+    @staticmethod
+    def extract_last_trajectory(input_string: str) -> np.ndarray | None:
+        """
+        从输入的字符串中提取所有六个坐标对的轨迹，并返回最后一个匹配的轨迹数据。
+
+        参数:
+        input_string (str): 输入的字符串，包含一个或多个轨迹数据。
+
+        返回:
+        np.ndarray 或 None: 如果匹配到轨迹数据，返回最后一个匹配的轨迹；否则返回 None。
+        """
+        # 正则表达式，确保捕获包含六个坐标对的轨迹
+        pattern = r"\[\s*\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)\s*(?:,\s*\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)\s*){5}\s*\]"
+
+        # 使用 re.finditer 查找所有匹配的轨迹
+        matches = re.finditer(pattern, input_string, re.DOTALL)
+
+        # 最后一个匹配项
+        last_match = None
+
+        # 遍历所有匹配结果，更新 last_match 为最后一个匹配的结果
+        for match in matches:
+            last_match = match
+
+        # 如果找到了最后一个匹配项
+        if last_match:
+            # 获取最后一个匹配到的轨迹字符串
+            traj = last_match.group(0)
+
+            # 使用 ast.literal_eval 安全地解析字符串为 Python 对象
+            traj = ast.literal_eval(traj)
+
+            # 将解析出的轨迹转换为 NumPy 数组
+            traj = np.array(traj)
+
+            # 返回处理后的轨迹数据
+            return traj
+        else:
+            # 如果没有匹配到任何轨迹，返回 None
+            return None
+
+    def select_top_k(self, sys_prompt, obstacles: Obstacles, car_status: CarInfo, k: int = K) -> List[
+        Tuple[Obstacle, int]]:
         score_list = list()
         prompt_template = ChatPromptTemplate([
             ("system", sys_prompt),
@@ -568,14 +834,71 @@ class LLMMultiAgentDriver:
             output_str = chain.invoke({"input": user_input})
             num = self.parse_score(output_str)
             score_list.append((obstacle, num))
-            DEBUG = True
+            # DEBUG = True
             if DEBUG:
                 print(f"input: {user_input}")
                 print(f"output: {output_str}")
         return sorted(score_list, key=lambda x: x[1], reverse=True)[:k]
 
+    def driver_decision(self,
+                        distance_select_list: List[Tuple['Obstacle', int]],
+                        acceleration_select_list: List[Tuple['Obstacle', int]],
+                        speed_select_list: List[Tuple['Obstacle', int]],
+                        direction_select_list: List[Tuple['Obstacle', int]],
+                        car_info: 'CarInfo') -> np.ndarray | None:
+        # Step 1: Process the obstacles' information
+        obstacles_info = ""
+
+        # Function to process each list of selected obstacles
+        def process_obstacle_list(obstacle_list: List[Tuple['Obstacle', int]], category: str):
+            nonlocal obstacles_info
+            obstacles_info += f"{category}:\n"
+            for obstacle, score in obstacle_list:
+                obstacles_info += f"Score: {score}\n"
+                obstacles_info += obstacle.get_info() + "\n"
+
+        # Process obstacles for each category
+        process_obstacle_list(distance_select_list, "From Distance")
+        process_obstacle_list(acceleration_select_list, "From Acceleration")
+        process_obstacle_list(speed_select_list, "From Speed")
+        process_obstacle_list(direction_select_list, "From Direction")
+
+        # Step 2: Process the car's information
+        car_info_str = car_info.get_info()
+
+        # Step 3: Combine all the information and return as the final input string
+        input_str = obstacles_info + "\n" + car_info_str
+        if DEBUG:
+            print(input_str)
+
+        prompt_template = ChatPromptTemplate([
+            ("system", system_prompt_final_decision),
+            ("user", "{input}")
+        ])
+
+        chain = prompt_template | self.model | StrOutputParser()
+        output_str = chain.invoke({"input": input_str})
+        if DEBUG:
+            print(f"input: \n{input_str}")
+            print(f"output: \n{output_str}")
+
+        return self.extract_last_trajectory(output_str)
+
     def run(self, input_text: str) -> str:
-        pass
+        obs = Obstacles(input_text)
+        car_info = CarInfo(input_text)
+
+        if DEBUG:
+            print(car_info.get_info())
+            for x in obs.get_obstacles():
+                print(x.get_info())
+
+        distance_select = self.select_top_k(system_prompt_consider_distance, obs, car_info)
+        acceleration_select = self.select_top_k(system_prompt_consider_acceleration, obs, car_info)
+        speed_select = self.select_top_k(system_prompt_consider_speed, obs, car_info)
+        direction_select = self.select_top_k(system_prompt_consider_direction, obs, car_info)
+        decision = self.driver_decision(distance_select, acceleration_select, speed_select, direction_select, car_info)
+        return decision
 
 
 if __name__ == "__main__":
@@ -596,6 +919,7 @@ Perception and Prediction:
 - movable_object.trafficcone at (-9.29,13.81). Future trajectory: [(-9.31,13.81),(-9.31,13.81),(-9.29,13.8),(-9.31,13.77),(-9.33,13.75),(-9.33,13.75)]
 - vehicle.truck at (3.59,7.69). Future trajectory: [(3.59,7.71),(3.59,7.72),(3.59,7.74),(3.59,7.75),(3.59,7.77),(3.59,7.79)]
 - movable_object.trafficcone at (-12.32,9.92). Future trajectory: [(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92)]
+
 Ego-States:
  - Velocity (vx,vy): (-0.20,0.00)
  - Heading Angular Velocity (v_yaw): (-1.00)
@@ -606,8 +930,95 @@ Ego-States:
 Historical Trajectory (last 2 seconds): [(0.10,0.00), (0.20,0.00), (0.30,0.00), (0.40,0.00)]
 Mission Goal: FORWARD 
     """
-    obs = Obstacles(test_text)
-    car_info_ = CarInfo(test_text)
+    test2 = """
+output: 
+**Thought Process:**
+
+Based on the input obstacles selected from multiple perspectives (distance, velocity, direction, and acceleration), I identify the most critical ones that pose a risk to the ego vehicle.
+
+From Distance:
+The top three obstacles are:
+
+1. A vehicle.car at position (0.50, 9.57) with a score of 8.
+2. A movable_object.trafficcone at position (5.25, 0.04) with a score of 7.
+3. A movable_object.trafficcone at position (5.47, 3.14) with a score of 7.
+
+From Velocity:
+The top three obstacles are:
+
+1. A vehicle.car at position (0.50, 9.57) with a score of 9.
+2. A movable_object.trafficcone at position (5.47, 3.14) with a score of 6.
+3. A movable_object.trafficcone at position (5.25, 0.04) with a score of 5.
+
+From Direction:
+The top three obstacles are:
+
+1. A movable_object.trafficcone at position (-13.47, 5.44) with a score of 8.
+2. A movable_object.trafficcone at position (-9.13, 19.80) with a score of 4.
+3. A movable_object.trafficcone at position (-9.70, 10.84) with a score of 4.
+
+From Acceleration:
+The top three obstacles are:
+
+1. A vehicle.car at position (0.50, 9.57) with a score of 9.
+2. A movable_object.trafficcone at position (5.47, 3.14) with a score of 6.
+3. A movable_object.trafficcone at position (5.25, 0.04) with a score of 5.
+
+Considering the potential effects of these obstacles on the trajectory planning, I prioritize avoiding collisions and near-misses.
+
+**Meta Action:**
+
+To ensure the ego vehicle remains safe, I will:
+
+1. Adjust speed to maintain a safe distance from the closest obstacle (vehicle.car at position (0.50, 9.57)).
+2. Steer away from the traffic cones at positions (5.25, 0.04) and (5.47, 3.14).
+3. Monitor the direction of the movable_object.trafficcones at positions (-13.47, 5.44), (-9.13, 19.80), and (-9.70, 10.84) to avoid any potential collisions.
+
+**Trajectory Planning:**
+
+Based on the analysis of obstacles and the ego vehicle's current state, I plan a safe and feasible 3-second route for the ego vehicle. The route consists of **6 waypoints**, one every 0.5 seconds:
+
+1. (x: 0.10, y: 0.00)
+2. (x: 0.20, y: 0.00)
+3. (x: 0.30, y: 0.00)
+4. (x: 0.40, y: 0.00)
+5. (x: 0.50, y: 9.56)
+6. (x: 0.52, y: 9.59)
+
+This trajectory takes into account the selected obstacles and ensures the ego vehicle avoids any potential collisions or hazards while maintaining a safe distance from the closest obstacle.
+
+**Output:**
+
+Thoughts:
+
+* Notable Objects: The top three obstacles from distance are a vehicle.car at position (0.50, 9.57), a movable_object.trafficcone at position (5.25, 0.04), and another movable_object.trafficcone at position (5.47, 3.14).
+* Potential Effects: These obstacles pose a risk to the ego vehicle's trajectory planning, requiring adjustments in speed and steering.
+
+Meta Action:
+
+* Adjust speed to maintain a safe distance from the closest obstacle.
+* Steer away from the traffic cones at positions (5.25, 0.04) and (5.47, 3.14).
+* Monitor the direction of the movable_object.trafficcones at positions (-13.47, 5.44), (-9.13, 19.80), and (-9.70, 10.84) to avoid any potential collisions.
+
+Trajectory:
+
+[(x1, y1), (x2, y2), (x3, y3), (x4, y4), (x5, y5), (x6, y6)]
+= [(0.10, 0.00), (0.20, 0.00), (0.30,0.00), (0.40,  0.00), (0.50, 9.56), (0.52, 9.59)]    
+    
+    """
     llm_driver = LLMMultiAgentDriver("llama3")
-    distance_list = llm_driver.select_top_k(system_prompt_consider_speed, obs, car_info_)
-    print(distance_list)
+    data = load_pkl_file("data/our_dataset/basic_dataset/basic_dataset_default_middle.pkl")
+    result_dict = dict()
+    error_token_list = list()
+    for key, val in tqdm(data.items(), total=len(data)):
+        # print(val['ground_truth'])
+        this_result = llm_driver.run(val["input"])
+        if this_result is not None:
+            result_dict[key] = this_result
+        else:
+            error_token_list.append(key)
+
+    print("error tokens:")
+    for x in error_token_list:
+        print(x)
+    save_to_pkl(result_dict, "outputs/pkl/basic_dataset_multi_agent_llama3_no_error_middle.pkl")

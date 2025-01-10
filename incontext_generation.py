@@ -19,7 +19,6 @@ prompt_mapping_dict = {
 }
 
 
-
 class TrajectoryGenerator:
     def __init__(self, args):
         """
