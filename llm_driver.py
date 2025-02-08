@@ -4,8 +4,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama.llms import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
 from typing import List, Tuple
-from util import load_pkl_file, save_to_pkl
+from util import load_pkl_file, save_to_pkl, LLMAutoDriver
 import numpy as np
+import random
 import re
 import sys
 import ast
@@ -211,10 +212,10 @@ Here is the input for the obstacle and ego vehicle information:
    - Type: `type`
    - Position: `position`
    - Distance: `distance` (distance between the obstacle and the ego vehicle)
-   
+
 2. **Ego Vehicle Information:**
    - Speed: `velocity (vx, vy)` (speed components of the ego vehicle in the x and y directions)
-   
+
 3. **Mission Goal:**
    - Goal: `Mission Goal` (e.g., FORWARD)
 
@@ -424,9 +425,91 @@ system_prompt_final_decision = """
 <example>
 """ + example_input + example_output
 
+system_prompt_gptdriver = """
+**Autonomous Driving Planner**
+Role: You are the brain of an autonomous vehicle. Plan a safe 3-second driving trajectory. Avoid collisions with other objects.
+
+Context
+- Coordinates: X-axis is perpendicular, and Y-axis is parallel to the direction you're facing. You're at point (0,0).
+- Objective: Create a 3-second route using 6 waypoints, one every 0.5 seconds.
+
+Inputs
+1. Perception & Prediction: Info about surrounding objects and their predicted movements.
+2. Historical Trajectory: Your past 2-second route, given by 4 waypoints.
+3. Ego-States: Your current state including velocity, heading angular velocity, can bus data, heading speed, and steering signal.
+4. Mission Goal: Goal location for the next 3 seconds.
+
+Task
+- Thought Process: Note down critical objects and potential effects from your perceptions and predictions.
+- Action Plan: Detail your meta-actions based on your analysis.
+- Trajectory Planning: Develop a safe and feasible 3-second route using 6 new waypoints.
+
+Output
+- Thoughts:
+  - Notable Objects
+    Potential Effects
+- Meta Action
+- Trajectory (MOST IMPORTANT):
+  - [(x1,y1), (x2,y2), ... , (x6,y6)]
+
+For example:
+Input:
+
+Perception and Prediction:
+ - vehicle.car at (-3.43,-2.48). Future trajectory: [(-3.44,-2.48), (-3.44,-2.30), (-3.44,-2.03), (-3.47,-1.56), (-3.47,-0.87), (-3.47,0.20)]
+ - vehicle.trailer at (-7.46,14.92). Future trajectory: [(-5.21,15.64), (-2.31,16.57), (0.62,17.39), (3.28,18.03), (5.89,18.45), (8.70,18.91)]
+ - movable_object.trafficcone at (3.53,1.46). Future trajectory: [(3.53,1.47), (3.53,1.47), (3.54,1.47), (3.53,1.39), (3.53,1.24), (3.53,1.09)]
+ - human.pedestrian.adult at (5.04,2.24). Future trajectory: [(5.04,2.28), (5.08,2.40), (5.05,2.54), (4.90,2.86), (4.81,3.05), (4.64,3.19)]
+ - human.pedestrian.adult at (10.64,15.27). Future trajectory: [(10.64,15.27), (10.62,15.23), (10.60,15.20), (10.57,15.16), (10.57,15.02), (10.56,14.87)]
+ - human.pedestrian.adult at (5.68,1.60). Future trajectory: [(5.68,1.55), (5.64,1.51), (5.50,1.61), (5.37,1.74), (5.11,1.72), (4.89,1.84)]
+Ego-States:
+ - Velocity (vx,vy): (-0.00,0.00)
+ - Heading Angular Velocity (v_yaw): (-0.00)
+ - Acceleration (ax,ay): (-0.00,-0.00)
+ - Can Bus: (-0.12,0.08)
+ - Heading Speed: (0.00)
+ - Steering: (0.14)
+Historical Trajectory (last 2 seconds): [(0.00,-0.00), (0.00,0.00), (0.00,0.00), (0.00,0.00)]
+Mission Goal: FORWARD
+You should generate the following content:
+Thoughts:
+ - Notable Objects from Perception: None
+   Potential Effects from Prediction: None
+Meta Action: STOP
+Trajectory:
+[(0.00,0.00), (-0.00,0.00), (-0.00,0.00), (-0.00,-0.00), (-0.00,0.16), (-0.01,0.60)]
+
+"""
+
+system_prompt_io = """
+**Autonomous Driving Planner**
+Role: You are the brain of an autonomous vehicle. Plan a safe 3-second driving trajectory. Avoid collisions with other objects.
+
+Output
+- Thoughts: identify critical objects and potential effects from perceptions and predictions.
+- Meta Action
+- Trajectory (MOST IMPORTANT): 6 waypoints, one every 0.5 seconds
+  - [(x1,y1), (x2,y2), ... , (x6,y6)]
+"""
+
+system_prompt_cot = """
+**Autonomous Driving Planner**
+Role: You are the brain of an autonomous vehicle. Plan a safe 3-second driving trajectory. Avoid collisions with other objects. You need think step by step
+
+Output
+- Thoughts: identify critical objects and potential effects from perceptions and predictions.
+- Meta Action
+- Trajectory (MOST IMPORTANT): 6 waypoints, one every 0.5 seconds
+  - [(x1,y1), (x2,y2), ... , (x6,y6)]
+"""
+
 DEBUG = False
 
 K = 3
+
+random.seed(42)
+
+method = "IO"
 
 
 class CarInfo:
@@ -459,26 +542,45 @@ class CarInfo:
         velocity_match = re.search(patterns['velocity'], info_text)
         if velocity_match:
             self.velocity = (float(velocity_match.group(1)), float(velocity_match.group(2)))
+        else:
+            print(f"未匹配速度: {info_text}")
+            sys.exit(-1)
+
 
         angular_velocity_match = re.search(patterns['angular_velocity'], info_text)
         if angular_velocity_match:
             self.angular_velocity = float(angular_velocity_match.group(1))
+        else:
+            print(f"未匹配角速度: {info_text}")
+            sys.exit(-1)
 
         acceleration_match = re.search(patterns['acceleration'], info_text)
         if acceleration_match:
             self.acceleration = (float(acceleration_match.group(1)), float(acceleration_match.group(2)))
+        else:
+            print(f"未匹配加速度: {info_text}")
+            sys.exit(-1)
 
         can_bus_match = re.search(patterns['can_bus'], info_text)
         if can_bus_match:
             self.can_bus = (float(can_bus_match.group(1)), float(can_bus_match.group(2)))
+        else:
+            print(f"未匹配CAN: {info_text}")
+            sys.exit(-1)
 
         heading_speed_match = re.search(patterns['heading_speed'], info_text)
         if heading_speed_match:
             self.heading_speed = float(heading_speed_match.group(1))
+        else:
+            print(f"未匹heading speed: {info_text}")
+            sys.exit(-1)
 
         steering_match = re.search(patterns['steering'], info_text)
         if steering_match:
             self.steering = float(steering_match.group(1))
+        else:
+            print(f"未匹配steering: {info_text}")
+            sys.exit(-1)
 
         historical_trajectory_match = re.search(patterns['historical_trajectory'], info_text, re.DOTALL)
         if historical_trajectory_match:
@@ -486,10 +588,16 @@ class CarInfo:
             # 提取所有的 (x, y) 坐标
             points = re.findall(r'\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)', traj_str)
             self.history_trajectory = [(float(x), float(y)) for x, y in points]
+        else:
+            print(f"未匹配历史轨迹: {info_text}")
+            sys.exit(-1)
 
         mission_goal_match = re.search(patterns['mission_goal'], info_text)
         if mission_goal_match:
             self.mission_goal = mission_goal_match.group(1)
+        else:
+            print(f"未匹配目标: {info_text}")
+            sys.exit(-1)
 
     def to_json(self) -> str:
         # 将类的属性转换为字典
@@ -713,9 +821,11 @@ class Obstacles:
                     self.obstacles.append(obj)
 
     @staticmethod
-    def parse_obstacle_line(line: str) -> Obstacle:
+    def parse_obstacle_line(line: str) -> "Obstacle":
         # 更新正则表达式，允许行首有空白字符，并严格匹配整行
-        pattern = r"^\s*-\s+([\w\.]+)\s+at\s+\(([-\d.]+),([-\d.]+)\)\.\s+Future trajectory:\s+(\[.*\])$"
+        # pattern = r"^\s*-\s+([\w\.]+)\s+at\s+\(([-\d.]+),([-\d.]+)\)\.\s+Future trajectory:\s+(\[.*\])$"
+        # pattern = r"^\s*-\s+([\w\.]+)\s+at\s+\(([-\d.]+),([-\d.]+)\)\.\s+Future trajectory:\s*(\[[^\]]*\])$"
+        pattern = r"^\s*-\s+([\w\.]+)\s+at\s+\(([-\d.]+)\s*,\s*([-\d.]+)\)\.\s+Future trajectory:\s*(\[[^\]]*\])$"
         match = re.match(pattern, line)
         if match:
             obj_type = match.group(1)  # 障碍物名称
@@ -734,11 +844,24 @@ class Obstacles:
                 if isinstance(traj, list) and all(isinstance(t, tuple) and len(t) == 2 for t in traj):
                     # 将 'None' 保留为 None，数值保持为浮点数
                     traj_processed = []
+                    prev_x, prev_y = 0, 0  # 用于存储前一个有效的轨迹点
+
                     for px, py in traj:
                         # px 和 py 可能是 float 或 None
-                        px_val = float(px) if isinstance(px, (int, float)) else None
-                        py_val = float(py) if isinstance(py, (int, float)) else None
+                        if px is None:  # 如果当前 px 为 None，则沿用前一个 px
+                            px_val = prev_x
+                        else:
+                            px_val = float(px) if isinstance(px, (int, float)) else None
+                            prev_x = px_val  # 更新前一个有效的 px
+
+                        if py is None:  # 如果当前 py 为 None，则沿用前一个 py
+                            py_val = prev_y
+                        else:
+                            py_val = float(py) if isinstance(py, (int, float)) else None
+                            prev_y = py_val  # 更新前一个有效的 py
+
                         traj_processed.append((px_val, py_val))
+
                     traj = traj_processed
                 else:
                     raise ValueError("轨迹格式不正确")
@@ -887,7 +1010,7 @@ class LLMMultiAgentDriver:
     def run(self, input_text: str) -> str:
         obs = Obstacles(input_text)
         car_info = CarInfo(input_text)
-
+        # DEBUG = True
         if DEBUG:
             print(car_info.get_info())
             for x in obs.get_obstacles():
@@ -902,123 +1025,95 @@ class LLMMultiAgentDriver:
 
 
 if __name__ == "__main__":
-    test_text = """
-Perception and Prediction:
-- movable_object.trafficcone at (5.25,0.04). Future trajectory: [(5.25,0.04),(5.25,0.04),(5.25,0.04),(5.25,0.04),(5.25,0.04),(5.25,0.01)]
-- movable_object.trafficcone at (-13.47,5.44). Future trajectory: [(-13.47,5.47),(-13.47,5.47),(-13.47,5.47),(-13.47,5.47),(-13.47,5.47),(-13.47,5.4)]
-- movable_object.trafficcone at (-9.13,19.8). Future trajectory: [(-9.13,19.81),(-9.13,19.81),(-9.13,19.81),(89.87,-75.21000000000001),(-9.12,19.78),(-105.12,96.76)]
-- movable_object.trafficcone at (-9.3,16.88). Future trajectory: [(-9.3,16.88),(-9.3,16.88),(-9.3,16.88),(-9.3,16.88),(-9.3,16.88),(-9.3,16.88)]
-- movable_object.trafficcone at (-13.37,8.49). Future trajectory: [(-13.37,8.49),(-13.37,8.49),(-13.37,8.49),(-13.37,8.49),(-13.37,8.49),(-13.36,8.41)]
-- movable_object.trafficcone at (-9.7,10.84). Future trajectory: [(-9.7,10.84),(-9.7,10.84),(-9.7,10.84),(-9.7,10.84),(-9.7,10.82),(-9.71,10.79)]
-- vehicle.car at (1.08,15.43). Future trajectory: [(1.12,15.43),(1.12,15.43),(1.12,15.43),(1.08,15.59),(1.12,16.25),(1.16,16.9)]
-- vehicle.car at (0.5,9.57). Future trajectory: [(0.51,9.57),(0.51,9.57),(0.51,9.57),(0.51,9.57),(0.52,9.59),(0.52,9.56)]
-- movable_object.trafficcone at (-9.47,18.3). Future trajectory: [(-9.47,18.3),(-9.47,18.3),(-9.47,18.3),(-9.47,18.3),(-9.47,18.3),(-9.47,18.3)]
-- movable_object.barrier at (-9.4,19.11). Future trajectory: [(-9.41,19.11),(-9.41,19.11),(-9.42,19.07),(-9.42,19.03),(-9.42,19.0),(-9.43,18.96)]
-- movable_object.trafficcone at (5.47,3.14). Future trajectory: [(5.46,3.15),(5.46,3.16),(5.46,3.16),(5.45,3.17),(5.45,3.18),(5.46,3.14)]
-- vehicle.construction at (-11.76,14.44). Future trajectory: [(-11.76,14.44),(-11.76,14.43),(-11.76,14.43),(-11.76,14.43),(-11.76,14.43),(-11.76,14.43)]
-- movable_object.trafficcone at (-9.29,13.81). Future trajectory: [(-9.31,13.81),(-9.31,13.81),(-9.29,13.8),(-9.31,13.77),(-9.33,13.75),(-9.33,13.75)]
-- vehicle.truck at (3.59,7.69). Future trajectory: [(3.59,7.71),(3.59,7.72),(3.59,7.74),(3.59,7.75),(3.59,7.77),(3.59,7.79)]
-- movable_object.trafficcone at (-12.32,9.92). Future trajectory: [(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92),(-12.32,9.92)]
-
-Ego-States:
- - Velocity (vx,vy): (-0.20,0.00)
- - Heading Angular Velocity (v_yaw): (-1.00)
- - Acceleration (ax,ay): (0.00,0.50)
- - Can Bus: (-0.03,0.06)
- - Heading Speed: (0.00)
- - Steering: (-0.28)
-Historical Trajectory (last 2 seconds): [(0.10,0.00), (0.20,0.00), (0.30,0.00), (0.40,0.00)]
-Mission Goal: FORWARD 
-    """
-    test2 = """
-output: 
-**Thought Process:**
-
-Based on the input obstacles selected from multiple perspectives (distance, velocity, direction, and acceleration), I identify the most critical ones that pose a risk to the ego vehicle.
-
-From Distance:
-The top three obstacles are:
-
-1. A vehicle.car at position (0.50, 9.57) with a score of 8.
-2. A movable_object.trafficcone at position (5.25, 0.04) with a score of 7.
-3. A movable_object.trafficcone at position (5.47, 3.14) with a score of 7.
-
-From Velocity:
-The top three obstacles are:
-
-1. A vehicle.car at position (0.50, 9.57) with a score of 9.
-2. A movable_object.trafficcone at position (5.47, 3.14) with a score of 6.
-3. A movable_object.trafficcone at position (5.25, 0.04) with a score of 5.
-
-From Direction:
-The top three obstacles are:
-
-1. A movable_object.trafficcone at position (-13.47, 5.44) with a score of 8.
-2. A movable_object.trafficcone at position (-9.13, 19.80) with a score of 4.
-3. A movable_object.trafficcone at position (-9.70, 10.84) with a score of 4.
-
-From Acceleration:
-The top three obstacles are:
-
-1. A vehicle.car at position (0.50, 9.57) with a score of 9.
-2. A movable_object.trafficcone at position (5.47, 3.14) with a score of 6.
-3. A movable_object.trafficcone at position (5.25, 0.04) with a score of 5.
-
-Considering the potential effects of these obstacles on the trajectory planning, I prioritize avoiding collisions and near-misses.
-
-**Meta Action:**
-
-To ensure the ego vehicle remains safe, I will:
-
-1. Adjust speed to maintain a safe distance from the closest obstacle (vehicle.car at position (0.50, 9.57)).
-2. Steer away from the traffic cones at positions (5.25, 0.04) and (5.47, 3.14).
-3. Monitor the direction of the movable_object.trafficcones at positions (-13.47, 5.44), (-9.13, 19.80), and (-9.70, 10.84) to avoid any potential collisions.
-
-**Trajectory Planning:**
-
-Based on the analysis of obstacles and the ego vehicle's current state, I plan a safe and feasible 3-second route for the ego vehicle. The route consists of **6 waypoints**, one every 0.5 seconds:
-
-1. (x: 0.10, y: 0.00)
-2. (x: 0.20, y: 0.00)
-3. (x: 0.30, y: 0.00)
-4. (x: 0.40, y: 0.00)
-5. (x: 0.50, y: 9.56)
-6. (x: 0.52, y: 9.59)
-
-This trajectory takes into account the selected obstacles and ensures the ego vehicle avoids any potential collisions or hazards while maintaining a safe distance from the closest obstacle.
-
-**Output:**
-
-Thoughts:
-
-* Notable Objects: The top three obstacles from distance are a vehicle.car at position (0.50, 9.57), a movable_object.trafficcone at position (5.25, 0.04), and another movable_object.trafficcone at position (5.47, 3.14).
-* Potential Effects: These obstacles pose a risk to the ego vehicle's trajectory planning, requiring adjustments in speed and steering.
-
-Meta Action:
-
-* Adjust speed to maintain a safe distance from the closest obstacle.
-* Steer away from the traffic cones at positions (5.25, 0.04) and (5.47, 3.14).
-* Monitor the direction of the movable_object.trafficcones at positions (-13.47, 5.44), (-9.13, 19.80), and (-9.70, 10.84) to avoid any potential collisions.
-
-Trajectory:
-
-[(x1, y1), (x2, y2), (x3, y3), (x4, y4), (x5, y5), (x6, y6)]
-= [(0.10, 0.00), (0.20, 0.00), (0.30,0.00), (0.40,  0.00), (0.50, 9.56), (0.52, 9.59)]    
-    
-    """
-    llm_driver = LLMMultiAgentDriver("llama3")
-    data = load_pkl_file("data/our_dataset/basic_dataset/basic_dataset_default_middle.pkl")
+    num_limit = None
+    data = load_pkl_file("data/our_dataset/basic_dataset"
+                         "/basic_dataset_random_point_modify_error_our_only_collision_after_error_middle.pkl")
+    data_list = list(data.items())
+    random.shuffle(data_list)
+    data = dict(data_list)
     result_dict = dict()
     error_token_list = list()
-    for key, val in tqdm(data.items(), total=len(data)):
-        # print(val['ground_truth'])
-        this_result = llm_driver.run(val["input"])
-        if this_result is not None:
-            result_dict[key] = this_result
-        else:
-            error_token_list.append(key)
 
-    print("error tokens:")
-    for x in error_token_list:
-        print(x)
-    save_to_pkl(result_dict, "outputs/pkl/basic_dataset_multi_agent_llama3_no_error_middle.pkl")
+    if not num_limit:
+        num_limit = len(data)
+
+    if method == "GPT-Driver":
+        llm_driver = LLMAutoDriver(
+            "llama3",
+            system_prompt_final_decision
+        )
+        i = 0
+        for key, val in tqdm(data.items(), total=num_limit):
+            i += 1
+            if i > num_limit:
+                break
+            this_result = llm_driver.run(val["input"])
+            this_result = LLMMultiAgentDriver.extract_last_trajectory(this_result)
+            if this_result is not None:
+                result_dict[key] = this_result
+            else:
+                error_token_list.append(key)
+        print("error tokens:")
+        for x in error_token_list:
+            print(x)
+        save_to_pkl(result_dict, "outputs/pkl/default_random_point_modify_error_middle_llama3_gptdriver.pkl")
+
+    elif method == "Our-multi-agent":
+        llm_driver = LLMMultiAgentDriver("llama3")
+        i = 0
+        for key, val in tqdm(data.items(), total=num_limit):
+            i += 1
+            if i > num_limit:
+                break
+            # print(val["input"])
+            this_result = llm_driver.run(val["input"])
+            if this_result is not None:
+                result_dict[key] = this_result
+            else:
+                error_token_list.append(key)
+
+        print("error tokens:")
+        for x in error_token_list:
+            print(x)
+        save_to_pkl(result_dict, "outputs/pkl/random_point_modify_error_middle_llama3_our_multi_agent_method.pkl")
+
+    elif method == "IO":
+        llm_driver = LLMAutoDriver(
+            "llama3",
+            system_prompt_io
+        )
+        i = 0
+        for key, val in tqdm(data.items(), total=num_limit):
+            i += 1
+            if i > num_limit:
+                break
+            this_result = llm_driver.run(val["input"])
+            this_result = LLMMultiAgentDriver.extract_last_trajectory(this_result)
+            if this_result is not None:
+                result_dict[key] = this_result
+            else:
+                error_token_list.append(key)
+        print("error tokens:")
+        for x in error_token_list:
+            print(x)
+        save_to_pkl(result_dict, "outputs/pkl/default_random_point_modify_error_middle_llama3_io.pkl")
+    elif method == "COT":
+        llm_driver = LLMAutoDriver(
+            "llama3",
+            system_prompt_cot
+        )
+        i = 0
+        for key, val in tqdm(data.items(), total=num_limit):
+            i += 1
+            if i > num_limit:
+                break
+            this_result = llm_driver.run(val["input"])
+            this_result = LLMMultiAgentDriver.extract_last_trajectory(this_result)
+            if this_result is not None:
+                result_dict[key] = this_result
+            else:
+                error_token_list.append(key)
+        print("error tokens:")
+        for x in error_token_list:
+            print(x)
+        save_to_pkl(result_dict, "outputs/pkl/default_random_point_modify_error_middle_llama3_cot.pkl")

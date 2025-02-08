@@ -168,21 +168,21 @@ You are the brain of an autonomous vehicle. Plan a safe 3-second driving traject
 - **Thinking:**
 
   1. **Construct an Autonomous Driving Space**
-  
+
      1. **Build the Euclidean Coordinate Plane Dimensions of the Autonomous Driving Space Based on Input**
-     
+
         1. Record the coordinates of all obstacles into the autonomous driving space.
         2. Calculate the Euclidean distance from each obstacle's current position to the vehicle using the Euclidean distance formula and record it into the autonomous driving space.
         3. Calculate the future Euclidean distance between obstacles and the vehicle based on the obstacles' future trajectories and record it into the autonomous driving space.
         4. Calculate the change in distance of obstacles using the Euclidean distance formula based on their future coordinates and record it into the autonomous driving space.
-     
+
      2. **Build the Time Dimension of the Autonomous Driving Space Based on Input**
-     
+
         1. Using Galileo motion equations, calculate the obstacles' own speed by dividing their distance changes by the time changes based on their future coordinate changes, and record it into the autonomous driving space.
         2. Calculate the obstacles' change vectors based on their future coordinate changes and the vehicle's direction vectors based on the vehicle's coordinate changes. Use the dot product formula to calculate the similarity between the obstacles' direction and the vehicle's direction and record it into the autonomous driving space.
-     
+
      3. **Construct Common Physical Constraints for the Built Autonomous Driving Space**
-     
+
         1. **Speed Ranges for Different Objects:**
            - **Pedestrians:** 1.2 - 1.5 m/s
            - **Bicycles:** 4 - 8 m/s
@@ -192,7 +192,7 @@ You are the brain of an autonomous vehicle. Plan a safe 3-second driving traject
            - **Buses:** 8 - 15 m/s
 
   2. **Comprehensive Reasoning and Decision Making:** Integrate the above analysis and use the autonomous driving space to make safe and wise decisions.
-     
+
      1. Store the coordinate distance information of obstacles on the left and right, as well as the obstacles' and vehicle's coordinate distances, speeds, and directions.
      2. Build context based on the recorded obstacle coordinate distance information, and the obstacles' and vehicle's coordinate distances, speeds, and directions.
      3. Perform reasoning based on motion-related physical constraints and the built context.
@@ -502,6 +502,12 @@ You should generate the following:
 </Example>
 """
 
+sys_prompt_ours_version_25_1_5 = """
+
+
+
+"""
+
 ana_sys_prompt = """
 **Role**: You are a model designed to detect anomalies in the current decisions of an autonomous driving planner. Your task is to conduct a comprehensive evaluation of the planner's current decision from three aspects: reasoning logic, confidence assessment, and risk detection.
 
@@ -568,11 +574,11 @@ Output:
   1. **Reasoning Logic:**
      - No notable objects detected, but the planner chooses to "TURN RIGHT WITH AN ACCELERATION" to achieve the right turn goal.
      - The trajectory points show large jumps, such as from (1.38, 2.75) to (9.64, 3.88), indicating a discontinuous path.
-  
+
   2. **Credibility Assessment:**
      - The abrupt changes in the trajectory reduce the planner’s reliability.
      - Further testing is needed to ensure the trajectory is smooth and dependable.
-  
+
   3. **Risk Detection:**
      - An erratic trajectory may cause the vehicle to stray from its intended path, increasing collision risks.
      - It is recommended to enhance trajectory validation and risk assessment to ensure decision safety.
@@ -589,7 +595,7 @@ sys_prompt_close_loop = """
 
 - **Coordinate System**: The X-axis is vertical, and the Y-axis is parallel to the vehicle's forward direction. You are located at point (0, 0).
 - **Goal**: Create a 3-second trajectory using 6 path points, with one path point every 0.5 seconds.
-                             
+
 **Input**
 
 1. **Perception and Prediction**: Information about surrounding objects and their predicted movements.
@@ -623,26 +629,26 @@ sys_prompt_close_loop = """
      - Store the distance information on both sides of obstacles, as well as the speed, direction, and position of obstacles and the vehicle.
      - If there are too many nodes, remove some unreasonable obstacles.
      - Based on movement-related physical constraints and the constructed context, perform reasoning and decision making:
-       
+
        - **Obstacle Selection**:
          1. Determine the number of obstacles in the autonomous driving space. If there are fewer than 10 obstacles, consider all obstacles. If there are more than 10, select the 10 most relevant obstacles based on the following criteria:
             - Reduce focus on suddenly appearing obstacles.
             - Reduce focus on non-continuous obstacles.
             - Reduce focus on obstacles with abnormal behavior.
-       
+
        - **Driving Direction and Obstacle Positioning**:
          1. Determine the vehicle's driving direction and the obstacles' positions:
             - If the vehicle's target is on the left side, pay special attention to obstacles on the left side.
             - If the vehicle's target is ahead, pay special attention to obstacles ahead.
             - If the vehicle's target is on the right side, pay special attention to obstacles on the right side.
-       
+
        - **Speed and Distance Considerations**:
          1. Prioritize the 5 obstacles with higher movement speeds.
          2. Prioritize the 5 obstacles closest to the vehicle.
-       
+
        - **Special Considerations**:
          - If there are trucks among the obstacles, maintain a larger distance from them due to their large size.
-     
+
      - **Combine Previous Decision Analysis**:
        - Review the **confidence assessment** and **risk detection** in the previous decision analysis.
        - Identify any shortcomings or risks in the previous trajectory and meta-actions.
@@ -703,11 +709,11 @@ analysis of decision making:
   1. **Reasoning Logic:**
      - No notable objects detected, but the planner chooses to "TURN RIGHT WITH AN ACCELERATION" to achieve the right turn goal.
      - The trajectory points show large jumps, such as from (1.38, 2.75) to (9.64, 3.88), indicating a discontinuous path.
-  
+
   2. **Credibility Assessment:**
      - The abrupt changes in the trajectory reduce the planner’s reliability.
      - Further testing is needed to ensure the trajectory is smooth and dependable.
-  
+
   3. **Risk Detection:**
      - An erratic trajectory may cause the vehicle to stray from its intended path, increasing collision risks.
      - It is recommended to enhance trajectory validation and risk assessment to ensure decision safety.

@@ -1,7 +1,7 @@
 import os
 from tqdm import tqdm
 from util import read_json, save_to_pkl, load_pkl_file
-
+import random
 from prompt_message import (
     system_message,
     generate_user_message,
@@ -13,7 +13,7 @@ from prompt_message import (
     generate_user_message_with_suddenly_appear_error_1error_point,
     example_message
 )
-
+random.seed(42)
 f = read_json('data/split.json')
 data = load_pkl_file('data/cached_nuscenes_info.pkl')
 save_path = "data/our_dataset/"

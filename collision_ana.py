@@ -13,10 +13,11 @@ default_files = [x for x in pkl_files if "default" in x]
 far2near_error_file = [x for x in pkl_files if "far2near" in x]
 near2far_error_file = [x for x in pkl_files if "near2far" in x]
 suddenly_appeal_file = [x for x in pkl_files if "suddenly" in x]
+modify_exist_file = [x for x in pkl_files if "modify" in x]
 
 result = dict()
 
-for file_list in [default_files, far2near_error_file, near2far_error_file, suddenly_appeal_file]:
+for file_list in [default_files, far2near_error_file, near2far_error_file, suddenly_appeal_file, modify_exist_file]:
     for file_name in file_list:
         hash_set = load_pkl_file(file_name)
         for hash_key in hash_set:
